@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+# hmodel — switch Hermes default model safely, bypassing the broken desktop picker (#141063)
+# usage:
+#   hmodel                          show current provider + default model
+#   hmodel --list                   list models for ALL providers (grouped)
+#   hmodel --set <model>            set model.default only (keep current provider)
+#   hmodel --set <provider> <model> switch provider AND set model.default
+#   hmodel --set ... --no-restart   edit only, don't restart the gateway
+set -euo pipefail
+CFG="$HOME/.hermes/config.yaml"
+PY=/usr/bin/python3
+
+show_current() {
+  $PY -c "import yaml;d=yaml.safe_load(open('$CFG'));m=d.get('model',{});print(m.get('provider'), m.get('default'))"
+}
+
+usage() {
+  echo "current: $(show_current)"
+  echo "usage: hmodel --list | hmodel --set [<provider>] <model> [--no-restart]"
+}
+
+if [ $# -eq 0 ]; then usage; exit 0; fi
+
+# --- listing: all providers -------------------------------------------------
+if [ "$1" = "--list" ]; then
+  $PY - "$CFG" <<'PY'
+import sys, json, urllib.request, yaml
+cfg = yaml.safe_load(open(sys.argv[1]))
+providers = cfg.get('providers', {})
+if not providers:
+    sys.exit('no providers: configured')
+for slug, p in providers.items():
+    base = (p.get('base_url') or '').rstrip('/')
+    key = p.get('api_key') or ''
+    print('== %s  (%s)' % (slug, base or 'no base_url'))
+    if not base:
+        print('   (no base_url — cannot list)')
+        continue
+    req = urllib.request.Request(base + '/models', headers={'Authorization': 'Bearer ' + key})
+    try:
+        data = json.load(urllib.request.urlopen(req, timeout=15))
+        ids = sorted(x['id'] for x in data.get('data', []))
+        for i in ids:
+            print('   ' + i)
+    except Exception as e:
+        print('   (unreachable: %s)' % e)
+PY
+  exit 0
+fi
+
+if [ "$1" != "--set" ]; then
+  echo "unknown arg: $1" >&2; usage; exit 2
+fi
+shift
+
+# parse --no-restart anywhere
+RESTART=1
+ARGS=()
+for a in "$@"; do
+  if [ "$a" = "--no-restart" ]; then RESTART=0; else ARGS+=("$a"); fi
+done
+set -- "${ARGS[@]}"
+
+if [ $# -eq 0 ]; then echo "hmodel --set needs a model" >&2; usage; exit 2; fi
+if [ $# -eq 1 ]; then
+  MID="$1"; SLUG=""
+elif [ $# -eq 2 ]; then
+  SLUG="$1"; MID="$2"
+else
+  echo "too many args" >&2; usage; exit 2
+fi
+
+[ -f "$CFG" ] || { echo "no config at $CFG" >&2; exit 1; }
+cp "$CFG" "$CFG.bak-$(date +%Y%m%d-%H%M%S)"
+
+$PY - "$CFG" "$SLUG" "$MID" <<'PY'
+import sys, yaml
+cfgfile, slug, mid = sys.argv[1], sys.argv[2], sys.argv[3]
+d = yaml.safe_load(open(cfgfile))
+
+if slug:
+    p = d.get('providers', {}).get(slug)
+    if not p:
+        sys.exit('no provider slug %r in providers: — add it first' % slug)
+    d['model']['provider'] = slug
+    d['model']['default'] = mid
+    if p.get('base_url'):  d['model']['base_url']  = p['base_url']
+    if p.get('api_key'):   d['model']['api_key']   = p['api_key']
+    if p.get('api_mode'):  d['model']['api_mode']  = p['api_mode']
+    d['model'].pop('key_env', None)
+    with open(cfgfile, 'w') as f:
+        yaml.safe_dump(d, f, sort_keys=False, allow_unicode=True)
+    print('set: provider=%s default=%s base_url=%s' % (slug, mid, d['model'].get('base_url')))
+else:
+    # model-only: change default:, nothing else
+    lines = open(cfgfile).readlines()
+    out, inmodel, done = [], False, False
+    for line in lines:
+        if line.rstrip() == 'model:':
+            inmodel = True; out.append(line); continue
+        if inmodel and line and not line.startswith(' '):
+            inmodel = False
+        if inmodel and line.startswith('  default:') and not done:
+            out.append('  default: %s\n' % mid); done = True; continue
+        out.append(line)
+    if not done:
+        sys.exit('could not find model.default in config')
+    open(cfgfile, 'w').writelines(out)
+    print('set: default=%s (provider unchanged)' % mid)
+PY
+
+# sanity: the credential must still be there, or the gateway refuses sessions
+$PY - "$CFG" "$MID" <<'PY'
+import sys, yaml
+m = yaml.safe_load(open(sys.argv[1])).get('model', {})
+assert m.get('default') == sys.argv[2], 'edit did not stick'
+assert m.get('api_key') or m.get('key_env'), 'model credential vanished — restore the .bak file'
+print('ok: model.default = %s | provider %s | cred intact' % (m['default'], m.get('provider')))
+PY
+
+if [ "$RESTART" = "1" ]; then
+  echo "restarting gateway to apply..."
+  hermes gateway restart
+  echo "done. open a NEW chat in the desktop app (don't /retry an old one)."
+fi

@@ -1,0 +1,79 @@
+#compdef hmodel
+# zsh completion for hmodel — switch Hermes default model safely (#141063)
+# install: place in a dir on $fpath as _hmodel, or source this file, then `compinit`
+
+_hmodel() {
+  local -a providers models
+  local CFG="$HOME/.hermes/config.yaml"
+
+  # provider slugs from config
+  providers=(${(f)"$(/usr/bin/python3 - "$CFG" <<'PY' 2>/dev/null
+import sys, yaml
+try:
+    d = yaml.safe_load(open(sys.argv[1]))
+    for k in (d.get('providers') or {}):
+        print(k)
+except Exception:
+    pass
+PY
+)"})
+
+  # models for a given provider slug
+  _hmodel_models() {
+    local slug="$1"
+    models=(${(f)"$(/usr/bin/python3 - "$CFG" "$slug" <<'PY' 2>/dev/null
+import sys, yaml, json, urllib.request
+cfg, slug = sys.argv[1], sys.argv[2]
+try:
+    d = yaml.safe_load(open(cfg))
+    p = (d.get('providers') or {}).get(slug)
+    if not p:
+        sys.exit()
+    ms = p.get('models')
+    if isinstance(ms, dict):
+        for k in ms: print(k)
+        sys.exit()
+    if isinstance(ms, list):
+        for k in ms: print(k)
+        sys.exit()
+    base = (p.get('base_url') or '').rstrip('/')
+    key = p.get('api_key') or ''
+    req = urllib.request.Request(base + '/models', headers={'Authorization': 'Bearer ' + key})
+    data = json.load(urllib.request.urlopen(req, timeout=10))
+    for x in data.get('data', []):
+        print(x['id'])
+except Exception:
+    pass
+PY
+)"})
+  }
+
+  local -a args
+  args=('--list[list models for all providers]' '--set[set provider and/or model]' '--no-restart[edit only, do not restart the gateway]')
+
+  if (( CURRENT == 2 )); then
+    _describe 'command' args
+    return
+  fi
+
+  case "${words[2]}" in
+    --set)
+      if (( CURRENT == 3 )); then
+        _describe 'provider' providers
+      elif (( CURRENT == 4 )); then
+        _hmodel_models "${words[3]}"
+        _describe 'model' models
+      else
+        _describe 'option' args
+      fi
+      ;;
+    --list)
+      _describe 'provider' providers
+      ;;
+    *)
+      _describe 'option' args
+      ;;
+  esac
+}
+
+_hmodel "$@"
