@@ -53,11 +53,11 @@ except Exception:
 PY
   }
 
-  # top-level: --list / --set
-  if [ $cword -eq 1 ]; then
-    COMPREPLY=( $(compgen -W "--list --set" -- "$cur") )
-    return 0
-  fi
+  # top-level: --listproviders / --list / --set
+    if [ $cword -eq 1 ]; then
+      COMPREPLY=( $(compgen -W "--listproviders --list --set" -- "$cur") )
+      return 0
+    fi
 
   # after --set
   if [ "${words[1]}" = "--set" ]; then

@@ -12,6 +12,7 @@ The Hermes desktop model picker has a config-clobbering bug: selecting a model (
 
 ```
 hmodel                          # show current provider + model
+hmodel --listproviders          # list configured providers (slug, name, base_url)
 hmodel --list                   # list models for ALL providers, grouped
 hmodel --set <model>            # change model only (keep current provider)
 hmodel --set <provider> <model> # switch provider AND model
