@@ -34,7 +34,7 @@ hmodel --set deepseek/deepseek-v4-flash-0731
 
 ## How it works
 
-- Backs up `~/.hermes/config.yaml` to `config.yaml.bak-<timestamp>` before editing.
+- Backs up `$HERMES_HOME/config.yaml` (default `~/.hermes/config.yaml`) to `config.yaml.bak-<timestamp>` before editing.
 - With a provider: rewrites the whole `model:` block (provider, default, base_url, api_key, api_mode) from the matching `providers.<slug>` entry, and strips any stale `key_env`.
 - Without a provider: changes only the `default:` line.
 - Asserts after the edit that the model stuck and the credential survived.
@@ -46,13 +46,6 @@ hmodel --set deepseek/deepseek-v4-flash-0731
 - Keep `api_key` **literal** in `config.yaml` (or an actual exported var like `${NOUS_API_KEY}`), never `key_env`.
 - After a switch, open a **new** chat in the desktop app — don't `/retry` an old one (sessions freeze their credential fingerprint at launch).
 
-## Tab completion
-
-- **bash:** source `hmodel-completion.bash` (or drop it in `/etc/bash_completion.d/`).
-- **zsh:** put `_hmodel` on your `$fpath` (e.g. `~/.zsh/completions/`) and run `compinit`.
-
-Completes provider slugs, and models per provider (from the provider's static `models:` list, or live from its endpoint).
-
 ## Install
 
 ```bash
@@ -61,6 +54,57 @@ install -m 0755 hmodel ~/.local/bin/hmodel
 
 ## Requirements
 
-- `~/.hermes/config.yaml` with a `providers:` section
-- `python3` with `yaml` (PyYAML)
+- `$HERMES_HOME/config.yaml` (default `~/.hermes/config.yaml`) with a `providers:` section
+- `python3` with `yaml` (PyYAML). The script resolves the first interpreter that can
+  `import yaml` (vendor venvs included); pin one explicitly with `HMODEL_PY=/path/to/python3`.
 - `hermes` CLI on PATH (for the gateway restart)
+
+## Tab completion
+
+Completes the switches, provider slugs, and models per provider (from the provider's
+static `models:` list, or live from its endpoint). It needs a `python3` with PyYAML,
+same as the script.
+
+### bash
+
+Source it from `~/.bashrc` (completion only exists in interactive shells):
+
+```bash
+[[ -r "$HOME/.local/bin/hmodel-completion.bash" ]] && source "$HOME/.local/bin/hmodel-completion.bash"
+```
+
+Then open a new shell, or `source ~/.bashrc`. Two things look like a failure but are not:
+
+- `hmodel<TAB>` with no space lists files named `hmodel*`. Bash completes the *command
+  word* that way for every command — type the space first: `hmodel <TAB>`.
+- With `set -o vi`, Tab in vi **command** mode does nothing; completion is bound in
+  insert mode. (Some distributions bind `TAB: menu-complete` in `inputrc`, which cycles
+  candidates instead of listing them.)
+
+### zsh
+
+`_hmodel` must be in a directory on `$fpath`, and that directory must be added to
+`$fpath` **before `compinit` runs** — a file that is merely present on disk, or a
+`.zshrc` edit placed after `compinit`, will not be picked up.
+
+```bash
+mkdir -p ~/.local/share/zsh/site-functions
+cp _hmodel ~/.local/share/zsh/site-functions/
+```
+
+In `~/.zshrc`, *above* the `compinit` lines:
+
+```zsh
+fpath=("$HOME/.local/share/zsh/site-functions" $fpath)
+autoload -Uz compinit
+compinit
+```
+
+Then `rm -f ~/.zcompdump*` to force the completion cache to rebuild, and open a new shell.
+
+Gotchas that silently disable it:
+
+- `ZDOTDIR`: if it is set, zsh reads `$ZDOTDIR/.zshrc`, not `~/.zshrc` (`echo $ZDOTDIR`).
+- Your login shell is whatever `getent passwd $USER` says — a bash-only setup does
+  nothing for a zsh login shell.
+- Completion functions are autoloaded, never `source`d.
